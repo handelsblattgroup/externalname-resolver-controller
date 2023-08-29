@@ -3,8 +3,8 @@ package version
 import (
 	"fmt"
 
-	"github.com/handelsblattgroup/externalname-resolver-controller/pkg/cli/version"
 	"github.com/handelsblattgroup/externalname-resolver-controller/pkg/cli/version/options"
+	"github.com/handelsblattgroup/externalname-resolver-controller/pkg/version"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
