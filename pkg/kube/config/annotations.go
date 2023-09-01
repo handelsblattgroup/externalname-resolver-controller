@@ -1,9 +1,9 @@
 package config
 
 var (
-	AnnotationControllerManaged      = "k8s.externalname.endpoints/managed"
+	AnnotationControllerManaged      = "externalname.resolver/managed"
 	AnnotationControllerManagedValue = "true"
-	AnnotationExternalHostname       = "k8s.externalname.endpoints/hostname"
-	AnnotationExternalProtocols      = "k8s.externalname.endpoints/protocols"
-	AnnotationExternalPorts          = "k8s.externalname.endpoints/ports"
+	AnnotationExternalHostname       = "externalname.resolver/hostname"
+	AnnotationExternalProtocols      = "externalname.resolver/protocols"
+	AnnotationExternalPorts          = "externalname.resolver/ports"
 )

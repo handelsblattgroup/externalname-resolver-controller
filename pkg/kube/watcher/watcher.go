@@ -16,6 +16,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/record"
 )
@@ -23,9 +24,13 @@ import (
 func New(options *options.Options) (*Watcher, error) {
 	watcher := new(Watcher)
 
-	config, err := clientcmd.BuildConfigFromFlags("", options.Kubeconfig)
+	config, err := rest.InClusterConfig()
 	if err != nil {
-		return nil, errors.Wrapf(err, "could not retreive kube config")
+		log.Info().Msgf("cluster kube config not found, trying local config: %s", options.Kubeconfig)
+		config, err = clientcmd.BuildConfigFromFlags("", options.Kubeconfig)
+		if err != nil {
+			return nil, errors.Wrapf(err, "could not retreive kube config")
+		}
 	}
 
 	clientset, err := kubernetes.NewForConfig(config)
@@ -86,8 +91,18 @@ func (i *Watcher) do() {
 
 			if i.externalNameWatcher.Relevant(service) {
 				eventType := externalNameEvent.Type
-				log.Debug().Msgf("event %s for service %s", eventType, service.GetName())
-				i.reconcile(service, eventType)
+
+				switch eventType {
+				case watch.Added:
+					log.Debug().Msgf("event %s for service %s", eventType, service.GetName())
+					i.reconcile(service, eventType)
+				case watch.Modified:
+					log.Info().Msgf("event %s for service %s", eventType, service.GetName())
+					i.reconcile(service, eventType)
+				case watch.Deleted:
+					log.Info().Msgf("event %s for service %s", eventType, service.GetName())
+					i.delete(service, eventType)
+				}
 			}
 		}
 	}
@@ -113,6 +128,26 @@ func (i *Watcher) getClusterDnsServer() error {
 
 	log.Info().Msgf("found cluster DNS server IP : %s", dns.ClusterServerIP)
 	return nil
+}
+
+func (i *Watcher) delete(service *corev1.Service, event watch.EventType) {
+	endpoints, err := i.endpointsWatcher.List()
+	if err != nil {
+		log.Error().Err(err).Msg("failed to retrieve endpoints list")
+	}
+
+	endpoint, found := reconcile.FindRelatedEndpoints(service, endpoints)
+	if found {
+		err = i.endpointsWatcher.Create(endpoint)
+		if err != nil {
+			log.Error().Err(err).Msgf("failed create correlated Endpoints for %s.%s", service.GetNamespace(), service.GetName())
+			i.broadcaster.Event(service, corev1.EventTypeWarning, err.Error(), "failed to delete correlated Endpoints")
+			return
+		}
+
+		log.Debug().Msgf("endpoint deleted %s", endpoint.GetName())
+		i.broadcaster.Event(service, corev1.EventTypeNormal, "", "correlated Endpoints deleted")
+	}
 }
 
 func (i *Watcher) reconcile(externalName *corev1.Service, event watch.EventType) {
@@ -141,12 +176,17 @@ func (i *Watcher) reconcile(externalName *corev1.Service, event watch.EventType)
 		i.broadcaster.Event(externalName, corev1.EventTypeNormal, "", "successfully updated service")
 	}
 
+	// ----
+	// check correlated Endpoints
 	endpoints, err := i.endpointsWatcher.List()
 	if err != nil {
 		log.Error().Err(err).Msg("failed to retrieve endpoints list")
 	}
 
-	if endpoint, found := reconcile.FindRelatedEndpoints(externalName, endpoints); found {
+	endpoint, found := reconcile.FindRelatedEndpoints(externalName, endpoints)
+	action := watch.Bookmark // nothing to do
+
+	if found {
 		log.Debug().Msgf("correlated endpoint %s found", endpoint.GetName())
 
 		modified := reconcile.EnsureEndpointAnnotations(externalName, endpoint)
@@ -158,20 +198,12 @@ func (i *Watcher) reconcile(externalName *corev1.Service, event watch.EventType)
 		}
 
 		if modified || ipChange {
-			err := i.endpointsWatcher.Update(endpoint)
-			if err != nil {
-				log.Error().Err(err).Msgf("failed to update endpoints %s.%s", endpoint.GetNamespace(), endpoint.GetName())
-				i.broadcaster.Event(endpoint, corev1.EventTypeWarning, err.Error(), "failed ensure all annotations")
-				return
-			}
-
-			log.Info().Msgf("successfully updated endpoints %s.%s", endpoint.GetNamespace(), endpoint.GetName())
-			i.broadcaster.Event(endpoint, corev1.EventTypeNormal, "", "successfully updated endpoints")
+			action = watch.Modified
 		}
 
 	} else {
 		log.Debug().Msg("correlated endpoint does not exist")
-		endpoint, err := reconcile.EndpointsFromExternalNameService(externalName)
+		endpoint, err = reconcile.EndpointsFromExternalNameService(externalName)
 		if err != nil {
 			log.Error().Err(err).Msgf("failed generate correlated Endpoints for %s.%s", externalName.GetNamespace(), externalName.GetName())
 			i.broadcaster.Event(externalName, corev1.EventTypeWarning, err.Error(), "failed to generate correlated Endpoints")
@@ -179,6 +211,11 @@ func (i *Watcher) reconcile(externalName *corev1.Service, event watch.EventType)
 		}
 
 		log.Debug().Msgf("endpoint generated %s", endpoint.GetName())
+		action = watch.Added
+	}
+
+	switch action {
+	case watch.Added:
 		err = i.endpointsWatcher.Create(endpoint)
 		if err != nil {
 			log.Error().Err(err).Msgf("failed create correlated Endpoints for %s.%s", externalName.GetNamespace(), externalName.GetName())
@@ -188,6 +225,17 @@ func (i *Watcher) reconcile(externalName *corev1.Service, event watch.EventType)
 
 		log.Debug().Msgf("endpoint created %s", endpoint.GetName())
 		i.broadcaster.Event(externalName, corev1.EventTypeNormal, "", "created correlated Endpoints")
+
+	case watch.Modified:
+		err := i.endpointsWatcher.Update(endpoint)
+		if err != nil {
+			log.Error().Err(err).Msgf("failed to update endpoints %s.%s", endpoint.GetNamespace(), endpoint.GetName())
+			i.broadcaster.Event(endpoint, corev1.EventTypeWarning, err.Error(), "failed ensure all annotations")
+			return
+		}
+
+		log.Info().Msgf("successfully updated endpoints %s.%s", endpoint.GetNamespace(), endpoint.GetName())
+		i.broadcaster.Event(endpoint, corev1.EventTypeNormal, "", "successfully updated endpoints")
 	}
 
 }

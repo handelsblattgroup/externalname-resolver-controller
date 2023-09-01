@@ -1,5 +1,7 @@
-ExternalName-Endpoint Controller
+ExternalName Resolver Controller
 ====
+
+[![1. Stable Build, Test and Push](https://github.com/handelsblattgroup/externalname-resolver-controller/actions/workflows/1_stable.yml/badge.svg)](https://github.com/handelsblattgroup/externalname-resolver-controller/actions/workflows/1_stable.yml)
 
 Kubernetes controller to manage ExternalName type Services resolving their DNS entry, generating and keeping in sync specific Endpoints.
 

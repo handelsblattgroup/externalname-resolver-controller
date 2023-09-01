@@ -8,16 +8,15 @@ BUILD_IMAGE ?= golang:1.20
 GOPATH ?= $(shell go env GOPATH)
 GOPATH_SRC := $(GOPATH)/src/
 CURRENT_WORK_DIR := $(shell pwd)
-ALL_FILES=$(shell find . -path ./vendor -prune -type f -o -name *.proto)
-PKG=github.com/handelsblattgroup/externalname-resolver-controller
+PKG := github.com/handelsblattgroup/externalname-resolver-controller
+IMAGE ?= handelsblattgroup/externalname-resolver-controller
+BIN ?= externalname-resolver-controller
 
 GIT_COMMIT := $(shell git rev-parse HEAD)
-VERSION ?= $(GIT_COMMIT)
+VERSION ?= $(shell git describe --tags)
 
-BIN ?= ""
 TAG ?= $(VERSION)
-IMAGE ?= ""
-YES ?= ""
+PUSH ?= ""
 
 .PHONY: all test build clean container build-dirs clean-dirs push-container check-image
 
@@ -26,15 +25,21 @@ all: build
 clean: clean-dirs
 
 container: check-image dist/$(ARCH)/$(BIN)
-	@docker build --quiet -t $(IMAGE):$(TAG) -f hack/release/Dockerfile .
+	@docker buildx create --use
+	@docker buildx build \
+		--quiet \
+        --push \
+    	--platform linux/amd64,linux/arm64 \
+		-t $(IMAGE):$(TAG) \
+		-f hack/release/Dockerfile .
 	$(info container image built $(IMAGE):$(TAG))
 
-ifeq ($(YES), 1)
+ifeq ($(PUSH), 1)
 push-container: check-image container
 	docker push $(IMAGE):$(TAG)
 else
 push-container:
-	$(warning push disabled. to enable set environment YES=1)
+	$(warning push disabled. to enable set environment PUSH=1)
 endif
 
 ifndef IMAGE
@@ -49,7 +54,8 @@ build: $(subst cmd, dist/$(ARCH), $(wildcard cmd/*))
 
 dist/$(ARCH)/%: build-dirs
 	$(info building binary $(notdir $@))
-	@docker run \
+	env
+	docker run \
 		--rm \
 		-u $$(id -u):$$(id -g) \
 		-v "$$(pwd):/src" \

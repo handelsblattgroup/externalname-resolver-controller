@@ -9,9 +9,9 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "hmgctl",
-	Short: "hmgctl contains a collection of cli tools for the Handelsblatt infrastructure",
-	Long:  ``,
+	Use:   "externalname-resolver-controller",
+	Short: "",
+	Long:  `Kubernetes controller to manage ExternalName type Services resolving their DNS entry, generating and keeping in sync specific Endpoints.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		fmt.Println("please use a subcommand...")
 		cmd.Usage()

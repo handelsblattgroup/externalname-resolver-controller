@@ -1,7 +1,7 @@
 package options
 
 var (
-	Domain  = "hmgctl"
+	Domain  = "externalname-resolver-controller"
 	Current = NewOptions()
 )
 
